@@ -1,72 +1,82 @@
-use tictactoe::game::{self, Game};
+use tictactoe::{board::Board, error::Result, game::game::Game, mark::Mark};
 
-use std::{io::stdin, str::FromStr};
+use axum::{
+    body::Body,
+    debug_handler,
+    extract::{Path, State},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use sqlx::{
+    postgres::{PgConnectOptions, PgPoolOptions},
+    PgPool,
+};
+use tokio::net::TcpListener;
+use uuid::Uuid;
 
-struct Move(usize);
-
-impl Move {
-    fn column(&self) -> usize {
-        return self.0 % 3;
-    }
-
-    fn row(&self) -> usize {
-        return self.0 / 3;
-    }
+async fn new_game(State(db_pool): State<PgPool>) -> Result<String> {
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO games(id, state) VALUES ($1, $2)")
+        .bind(id)
+        .bind(Game::default())
+        .execute(&db_pool)
+        .await?;
+    Ok(id.to_string())
 }
 
-impl FromStr for Move {
-    type Err = String;
+async fn get_game(
+    Path(id): Path<Uuid>,
+    State(db_pool): State<PgPool>,
+) -> Result<impl IntoResponse> {
+    let game: Game = sqlx::query_as("SELECT state FROM games WHERE id=$1")
+        .bind(id)
+        .fetch_one(&db_pool)
+        .await?;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let trimmed = s.trim();
-        let Some(first_char) = trimmed.chars().next() else {
-            return Err(format!(
-                "Expected a number from 1 to 9, got empty string \"{s}\""
-            ));
-        };
-        let Some(digit) = first_char.to_digit(10) else {
-            return Err(format!(
-                "Expected a number from 1 to 9, got not a number \"{first_char}\""
-            ));
-        };
-        Ok(match digit {
-            position @ 1..=9 => Move((position - 1) as usize),
-            _ => {
-                return Err(format!(
-                    "Expected a number from 1 to 9, got number out of bounds \"{digit}\""
-                ))
-            }
-        })
-    }
+    Ok(Json(game))
 }
 
-fn main() {
-    let mut game = Game::default();
+#[debug_handler]
+async fn make_move(
+    Path(id): Path<Uuid>,
+    State(db_pool): State<PgPool>,
+    Json((row, column)): Json<(usize, usize)>,
+) -> Result<impl IntoResponse> {
+    let mut game: Game = sqlx::query_as("SELECT state FROM games WHERE id=$1")
+        .bind(id)
+        .fetch_one(&db_pool)
+        .await?;
 
-    println!("{}", game.board());
+    game.make_turn(row, column).unwrap();
 
-    loop {
-        let mut buffer = String::default();
-        stdin()
-            .read_line(&mut buffer)
-            .expect("Couldn't read a line");
+    sqlx::query("UPDATE games SET state=$2 WHERE id=$1")
+        .bind(id)
+        .bind(game)
+        .execute(&db_pool)
+        .await?;
 
-        let r#move: Move = buffer.parse().expect("Couldnt recognize the move");
+    Ok("ok")
+}
 
-        let state = game.make_turn(r#move.row(), r#move.column()).unwrap();
+#[tokio::main]
+async fn main() {
+    let db_pool = PgPoolOptions::new()
+        .connect_with(
+            PgConnectOptions::new()
+                .host("127.0.0.1")
+                .username("postgres")
+                .password("password")
+                .port(5432)
+                .database("tictactoe"),
+        )
+        .await
+        .unwrap();
+    let app = Router::new()
+        .route("/game", get(new_game))
+        .route("/game/:id", get(get_game).post(make_move))
+        .with_state(db_pool);
 
-        println!("{}", game.board());
-
-        match state {
-            game::State::Playing => {}
-            game::State::Win(mark) => {
-                println!("{mark} wins!!!");
-                break;
-            }
-            game::State::Tie => {
-                println!("Tie!!!");
-                break;
-            }
-        }
-    }
+    let listener = TcpListener::bind("127.0.0.1:80").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
