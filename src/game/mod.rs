@@ -57,10 +57,11 @@ impl Game {
             && self.board.at(row, 1) == self.board.at(row, 2);
         let column_win = self.board.at(0, column) == self.board.at(1, column)
             && self.board.at(1, column) == self.board.at(2, column);
-        let diagonal_win = (self.board.at(0, 0) == self.board.at(1, 1)
-            && self.board.at(1, 1) == self.board.at(2, 2))
-            && (self.board.at(2, 0) == self.board.at(1, 1)
-                && self.board.at(1, 1) == self.board.at(0, 2));
+        let diagonal_win = self.board.at(1, 1).is_some()
+            && ((self.board.at(0, 0) == self.board.at(1, 1)
+                && self.board.at(1, 1) == self.board.at(2, 2))
+                || (self.board.at(2, 0) == self.board.at(1, 1)
+                    && self.board.at(1, 1) == self.board.at(0, 2)));
 
         row_win || column_win || diagonal_win
     }
