@@ -1,42 +1,13 @@
-use crate::mark::ParseMarkError;
+use std::borrow::Cow;
 
-use serde::{Deserialize, Serialize};
 use sqlx::{
     postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
     Database, Decode, Encode, Postgres, Type,
 };
-use std::{borrow::Cow, fmt::Display, ops::DerefMut, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub enum Mark {
-    #[default]
-    Circle,
-    Cross,
-}
+use crate::Mark;
 
-pub(crate) const CIRCLE: &str = "○";
-pub(crate) const CROSS: &str = "☓";
-
-impl FromStr for Mark {
-    type Err = ParseMarkError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            CIRCLE => Ok(Mark::Circle),
-            CROSS => Ok(Mark::Cross),
-            _ => Err(ParseMarkError),
-        }
-    }
-}
-
-impl Display for Mark {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Mark::Circle => write!(f, "{CIRCLE}"),
-            Mark::Cross => write!(f, "{CROSS}"),
-        }
-    }
-}
+use super::{CIRCLE, CROSS};
 
 impl Type<Postgres> for Mark {
     fn type_info() -> PgTypeInfo {
@@ -53,7 +24,7 @@ impl Type<Postgres> for Mark {
 
 impl Encode<'_, Postgres> for Mark {
     fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> sqlx::encode::IsNull {
-        encode_by_ref(self, buf.deref_mut());
+        encode_by_ref(self, &mut **buf);
         sqlx::encode::IsNull::No
     }
 }

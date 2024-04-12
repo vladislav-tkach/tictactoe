@@ -1,34 +1,13 @@
-use crate::mark::{Mark, ParseMarkError};
+use std::borrow::Cow;
 
-use serde::{Deserialize, Serialize};
 use sqlx::{
     postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
     Database, Decode, Encode, Postgres, Type,
 };
-use std::{borrow::Cow, fmt::Display, ops::DerefMut};
 
-const BOARD_SIZE: usize = 3;
+use crate::{mark, Board, Mark};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct Board([[Option<Mark>; BOARD_SIZE]; BOARD_SIZE]);
-
-impl Board {
-    pub fn mark(&mut self, row: usize, column: usize, mark: Mark) -> &mut Self {
-        self.0[row][column] = Some(mark);
-        self
-    }
-
-    pub fn at(&self, row: usize, column: usize) -> Option<Mark> {
-        self.0[row][column]
-    }
-
-    pub fn full(&self) -> bool {
-        self.0
-            .iter()
-            .flatten()
-            .all(|maybe_mark| maybe_mark.is_some())
-    }
-}
+use super::BOARD_SIZE;
 
 impl Type<Postgres> for Board {
     fn type_info() -> PgTypeInfo {
@@ -45,7 +24,7 @@ impl Type<Postgres> for Board {
 
 impl Encode<'_, Postgres> for Board {
     fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> sqlx::encode::IsNull {
-        encode_by_ref(self, buf.deref_mut());
+        encode_by_ref(self, &mut **buf);
         sqlx::encode::IsNull::No
     }
 }
@@ -55,7 +34,7 @@ pub(crate) fn encode_by_ref(board: &Board, buffer: &mut impl AsMut<Vec<u8>>) {
     for row in 0..BOARD_SIZE {
         for column in 0..BOARD_SIZE {
             match board.at(row, column) {
-                Some(mark) => _ = crate::mark::mark::encode_by_ref(&mark, buffer),
+                Some(mark) => crate::mark::sqlx::encode_by_ref(&mark, buffer),
                 None => buffer.extend(" ".as_bytes()),
             }
         }
@@ -64,11 +43,11 @@ pub(crate) fn encode_by_ref(board: &Board, buffer: &mut impl AsMut<Vec<u8>>) {
 
 impl Decode<'_, Postgres> for Board {
     fn decode(value: PgValueRef<'_>) -> Result<Self, sqlx::error::BoxDynError> {
-        Ok(decode(&value.as_str()?)?)
+        Ok(decode(value.as_str()?)?)
     }
 }
 
-pub(crate) fn decode(value: &str) -> Result<Board, ParseMarkError> {
+pub(crate) fn decode(value: &str) -> Result<Board, mark::ParseError> {
     let mut result = Board::default();
 
     for row in 0..BOARD_SIZE {
@@ -86,61 +65,15 @@ pub(crate) fn decode(value: &str) -> Result<Board, ParseMarkError> {
     Ok(result)
 }
 
-impl Display for Board {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ┌─┬─┬─┐
-        write!(f, "┌─")?;
-        for _ in 0..(BOARD_SIZE - 1) {
-            write!(f, "┬─")?;
-        }
-        writeln!(f, "┐")?;
-
-        // │○│☓│ │
-        for column in 0..BOARD_SIZE {
-            match self.at(0, column) {
-                Some(mark) => write!(f, "│{mark}")?,
-                None => write!(f, "│ ")?,
-            }
-        }
-        writeln!(f, "│")?;
-
-        // ├─┼─┼─┤
-        // │○│☓│ │
-        for row in 1..BOARD_SIZE {
-            // ├─┼─┼─┤
-            write!(f, "├─")?;
-            for _ in 0..(BOARD_SIZE - 1) {
-                write!(f, "┼─")?;
-            }
-            writeln!(f, "┤")?;
-
-            // │○│☓│ │
-            for column in 0..BOARD_SIZE {
-                match self.at(row, column) {
-                    Some(mark) => write!(f, "│{mark}")?,
-                    None => write!(f, "│ ")?,
-                }
-            }
-            writeln!(f, "│")?;
-        }
-
-        // └─┴─┴─┘
-        write!(f, "└─")?;
-        for _ in 0..(BOARD_SIZE - 1) {
-            write!(f, "┴─")?;
-        }
-        writeln!(f, "┘")
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::mark::mark::{CIRCLE, CROSS};
-
     use anyhow::Result;
     use claims::assert_err;
     use std::str;
+
+    use crate::mark::{CIRCLE, CROSS};
+
+    use super::*;
 
     #[test]
     fn encode_empty_ok() -> Result<()> {

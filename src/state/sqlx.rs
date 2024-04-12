@@ -1,24 +1,10 @@
-use crate::mark::{Mark, ParseMarkError};
+use crate::{mark::ParseError, State};
 
-use serde::{Deserialize, Serialize};
 use sqlx::{
     postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
     Database, Decode, Encode, Postgres, Type,
 };
 use std::{borrow::Cow, ops::DerefMut};
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub enum State {
-    Playing(Mark),
-    Win(Mark),
-    Tie,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self::Playing(Mark::default())
-    }
-}
 
 impl Type<Postgres> for State {
     fn type_info() -> PgTypeInfo {
@@ -45,11 +31,11 @@ fn encode_by_ref(state: &State, buffer: &mut impl AsMut<Vec<u8>>) {
     match state {
         State::Playing(active_role) => {
             buffer.extend("P".as_bytes());
-            crate::mark::mark::encode_by_ref(&active_role, buffer);
+            crate::mark::sqlx::encode_by_ref(&active_role, buffer);
         }
         State::Win(winner) => {
             buffer.extend("W".as_bytes());
-            crate::mark::mark::encode_by_ref(&winner, buffer);
+            crate::mark::sqlx::encode_by_ref(&winner, buffer);
         }
         State::Tie => buffer.extend("T".as_bytes()),
     }
@@ -61,7 +47,7 @@ impl Decode<'_, Postgres> for State {
     }
 }
 
-fn decode(value: &str) -> Result<State, ParseMarkError> {
+fn decode(value: &str) -> Result<State, ParseError> {
     let mut chars = value.chars();
     let state = match chars.next().unwrap_or(' ') {
         'P' => {
@@ -73,7 +59,7 @@ fn decode(value: &str) -> Result<State, ParseMarkError> {
             State::Win(winner)
         }
         'T' => State::Tie,
-        _ => return Err(ParseMarkError),
+        _ => return Err(ParseError),
     };
 
     Ok(state)

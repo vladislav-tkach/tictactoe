@@ -1,17 +1,13 @@
-use tictactoe::{board::Board, error::Result, game::game::Game, mark::Mark};
-
 use axum::{
-    body::Body,
-    debug_handler,
     extract::{Path, State},
-    response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
     PgPool,
 };
+use tictactoe::{error::Result, Game};
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -25,10 +21,7 @@ async fn new_game(State(db_pool): State<PgPool>) -> Result<String> {
     Ok(id.to_string())
 }
 
-async fn get_game(
-    Path(id): Path<Uuid>,
-    State(db_pool): State<PgPool>,
-) -> Result<impl IntoResponse> {
+async fn get_game(Path(id): Path<Uuid>, State(db_pool): State<PgPool>) -> Result<Json<Game>> {
     let game: Game = sqlx::query_as("SELECT state FROM games WHERE id=$1")
         .bind(id)
         .fetch_one(&db_pool)
@@ -37,12 +30,11 @@ async fn get_game(
     Ok(Json(game))
 }
 
-#[debug_handler]
 async fn make_move(
     Path(id): Path<Uuid>,
     State(db_pool): State<PgPool>,
     Json((row, column)): Json<(usize, usize)>,
-) -> Result<impl IntoResponse> {
+) -> Result<()> {
     let mut game: Game = sqlx::query_as("SELECT state FROM games WHERE id=$1")
         .bind(id)
         .fetch_one(&db_pool)
@@ -56,7 +48,7 @@ async fn make_move(
         .execute(&db_pool)
         .await?;
 
-    Ok("ok")
+    Ok(())
 }
 
 #[tokio::main]
