@@ -1,10 +1,49 @@
 use std::{io::stdin, str::FromStr, thread, time::Duration};
 
+use reqwest::Client;
 use tictactoe::{Game, Mark, State};
 use uuid::Uuid;
 
+const SERVER_URL: &str = "http://127.0.0.1:80/game";
+
 #[tokio::main]
 async fn main() {
+    let client = Client::new();
+    let game_id = get_or_create_game(&client).await;
+    let player_role = get_player_role();
+
+    loop {
+        let game_url = format!("{SERVER_URL}/{}", game_id.to_string());
+        let game = get_game(&client, game_url.as_str()).await;
+
+        match game.state() {
+            State::Playing(active_role) => {
+                if active_role != player_role {
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+
+                println!("{}", game.board());
+
+                let (row, column) = get_move();
+                post_move(&client, game_url.as_str(), row, column).await;
+                let game = get_game(&client, game_url.as_str()).await;
+
+                println!("{}", game.board());
+            }
+            State::Win(winner) => {
+                println!("{winner} wins!");
+                return;
+            }
+            State::Tie => {
+                println!("Tie.");
+                return;
+            }
+        }
+    }
+}
+
+async fn get_or_create_game(client: &Client) -> Uuid {
     println!("Create game (1) or join existing one (2)?");
     let mut buffer = String::default();
     stdin()
@@ -15,13 +54,10 @@ async fn main() {
         .parse()
         .expect(format!("expected a number, got {buffer}").as_str());
 
-    let server_url = "http://127.0.0.1:80/game";
-    let client = reqwest::Client::new();
-
     let game_id: Uuid = match choice {
         1 => {
             let string = client
-                .get(server_url)
+                .get(SERVER_URL)
                 .send()
                 .await
                 .expect("failed to request a new game")
@@ -47,6 +83,10 @@ async fn main() {
         other => panic!("expected 1 or 2, got {other}"),
     };
 
+    game_id
+}
+
+fn get_player_role() -> Mark {
     println!("Circle (1) or cross (2)?");
     let mut buffer = String::default();
     stdin()
@@ -61,72 +101,49 @@ async fn main() {
         2 => Mark::Cross,
         other => panic!("expected 1 or 2, got {other}"),
     };
+    player_role
+}
 
-    loop {
-        let game_url = format!("{server_url}/{}", game_id.to_string());
-        let game: Game = client
-            .get(game_url.as_str())
-            .send()
-            .await
-            .expect("failed to request game")
-            .json()
-            .await
-            .expect("failed to get request body");
+async fn get_game(client: &Client, game_url: &str) -> Game {
+    let game: Game = client
+        .get(game_url)
+        .send()
+        .await
+        .expect("failed to request game")
+        .json()
+        .await
+        .expect("failed to get request body");
+    game
+}
 
-        match game.state() {
-            State::Playing(active_role) => {
-                if active_role != player_role {
-                    thread::sleep(Duration::from_secs(1));
-                    continue;
-                }
+fn get_move() -> (usize, usize) {
+    println!("Enter your move (row, column)");
+    let mut buffer = String::default();
+    stdin()
+        .read_line(&mut buffer)
+        .expect("failed to read the move");
+    let mut parts = buffer.split(' ');
+    let row: usize = parts
+        .next()
+        .expect(format!("expected two numbers, got {buffer}").as_str())
+        .trim()
+        .parse()
+        .expect(format!("expected two numbers, got {buffer}").as_str());
+    let column: usize = parts
+        .next()
+        .expect(format!("expected two numbers, got {buffer}").as_str())
+        .trim()
+        .parse()
+        .expect(format!("expected two numbers, got {buffer}").as_str());
 
-                println!("{}", game.board());
+    (row, column)
+}
 
-                println!("Enter your move (row, column)");
-                let mut buffer = String::default();
-                stdin()
-                    .read_line(&mut buffer)
-                    .expect("failed to read the move");
-                let mut parts = buffer.split(' ');
-                let row: usize = parts
-                    .next()
-                    .expect(format!("expected two numbers, got {buffer}").as_str())
-                    .trim()
-                    .parse()
-                    .expect(format!("expected two numbers, got {buffer}").as_str());
-                let column: usize = parts
-                    .next()
-                    .expect(format!("expected two numbers, got {buffer}").as_str())
-                    .trim()
-                    .parse()
-                    .expect(format!("expected two numbers, got {buffer}").as_str());
-
-                client
-                    .post(game_url.as_str())
-                    .json(&(row, column))
-                    .send()
-                    .await
-                    .expect("failed to send the move");
-
-                let game: Game = client
-                    .get(game_url.as_str())
-                    .send()
-                    .await
-                    .expect("failed to request game")
-                    .json()
-                    .await
-                    .expect("failed to get request body");
-
-                println!("{}", game.board());
-            }
-            State::Win(winner) => {
-                println!("{winner} wins!");
-                return;
-            }
-            State::Tie => {
-                println!("Tie.");
-                return;
-            }
-        }
-    }
+async fn post_move(client: &Client, game_url: &str, row: usize, column: usize) {
+    client
+        .post(game_url)
+        .json(&(row, column))
+        .send()
+        .await
+        .expect("failed to send the move");
 }
