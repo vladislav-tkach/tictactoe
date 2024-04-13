@@ -9,10 +9,16 @@ use sqlx::{
 };
 use tictactoe::{error::Result, Game};
 use tokio::net::TcpListener;
+use tracing::{info, subscriber::set_global_default};
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 use uuid::Uuid;
 
+#[tracing::instrument(name = "Creating a new game", skip(db_pool))]
 async fn new_game(State(db_pool): State<PgPool>) -> Result<String> {
     let id = Uuid::new_v4();
+    info!("Id: {}", id.to_string());
     sqlx::query("INSERT INTO games(id, state) VALUES ($1, $2)")
         .bind(id)
         .bind(Game::default())
@@ -21,6 +27,7 @@ async fn new_game(State(db_pool): State<PgPool>) -> Result<String> {
     Ok(id.to_string())
 }
 
+#[tracing::instrument(name = "Fetching details of the game", skip(db_pool))]
 async fn get_game(Path(id): Path<Uuid>, State(db_pool): State<PgPool>) -> Result<Json<Game>> {
     let game: Game = sqlx::query_as("SELECT state FROM games WHERE id=$1")
         .bind(id)
@@ -30,6 +37,7 @@ async fn get_game(Path(id): Path<Uuid>, State(db_pool): State<PgPool>) -> Result
     Ok(Json(game))
 }
 
+#[tracing::instrument(name = "Performing the move", skip(db_pool))]
 async fn make_move(
     Path(id): Path<Uuid>,
     State(db_pool): State<PgPool>,
@@ -53,6 +61,15 @@ async fn make_move(
 
 #[tokio::main]
 async fn main() {
+    LogTracer::init().expect("Failed to set logger");
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let formatting_layer = BunyanFormattingLayer::new("tictactoe".to_owned(), std::io::stdout);
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+    set_global_default(subscriber).expect("Failed to set subscriber");
+
     let db_pool = PgPoolOptions::new()
         .connect_with(
             PgConnectOptions::new()
